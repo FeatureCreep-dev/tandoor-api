@@ -22,7 +22,7 @@ version = "{version}"
 description = "Auto-generated Python client for the Tandoor Recipes API"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 authors = [
     {{name = "Tandoor Client Auto-Publisher"}},
 ]
@@ -30,11 +30,10 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
 keywords = ["tandoor", "recipes", "api", "client", "openapi"]
