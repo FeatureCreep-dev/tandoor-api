@@ -46,6 +46,7 @@ dependencies = [
 Homepage = "{repo_url}"
 "Tandoor Recipes" = "{upstream_url}"
 "Bug Tracker" = "{repo_url}/issues"
+Funding = "https://buymeacoffee.com/featurecreep"
 
 [tool.setuptools.packages.find]
 include = ["tandoor_client*"]
