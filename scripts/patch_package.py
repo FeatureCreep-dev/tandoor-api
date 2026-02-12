@@ -21,7 +21,7 @@ name = "tandoor-client"
 version = "{version}"
 description = "Auto-generated Python client for the Tandoor Recipes API"
 readme = "README.md"
-license = "AGPL-3.0-only"
+license = "MIT"
 requires-python = ">=3.9"
 authors = [
     {{name = "Tandoor Client Auto-Publisher"}},
@@ -29,7 +29,7 @@ authors = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",

@@ -68,4 +68,4 @@ gh workflow run build-and-publish.yml -f force=true
 
 ## License
 
-AGPL-3.0 — matching the upstream Tandoor Recipes license.
+MIT
