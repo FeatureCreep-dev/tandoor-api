@@ -1,0 +1,273 @@
+name: Build and Publish Tandoor Client
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force rebuild even if no changes detected"
+        required: false
+        type: boolean
+        default: false
+
+# Required repo variables (Settings > Secrets and variables > Actions > Variables):
+#   UPSTREAM_REPO  - e.g. TandoorRecipes/recipes
+#   UPSTREAM_URL   - e.g. https://github.com/TandoorRecipes/recipes.git
+#   API_PATHS      - space-separated paths to check for API changes
+#                    e.g. "cookbook/serializer cookbook/views cookbook/urls"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    outputs:
+      has_new_tag: ${{ steps.detect.outputs.has_new_tag }}
+      latest_tag: ${{ steps.detect.outputs.latest_tag }}
+      latest_ref: ${{ steps.detect.outputs.latest_ref }}
+      stored_ref: ${{ steps.detect.outputs.stored_ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for new upstream release
+        id: detect
+        run: |
+          set -euo pipefail
+
+          UPSTREAM="${{ vars.UPSTREAM_URL }}"
+          FORCE="${{ inputs.force || 'false' }}"
+
+          # Find latest semver tag
+          latest_tag=$(git ls-remote --tags "$UPSTREAM" | \
+            grep -oP 'refs/tags/\K[0-9]+\.[0-9]+(\.[0-9]+)?$' | \
+            sort -t. -k1,1n -k2,2n -k3,3n | tail -1 || echo "")
+
+          if [ -z "$latest_tag" ]; then
+            echo "No upstream tags found"
+            echo "has_new_tag=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Resolve tag to commit ref
+          latest_ref=$(git ls-remote --tags "$UPSTREAM" "refs/tags/${latest_tag}^{}" | \
+            awk '{print $1}')
+          if [ -z "$latest_ref" ]; then
+            latest_ref=$(git ls-remote --tags "$UPSTREAM" "refs/tags/$latest_tag" | \
+              awk '{print $1}')
+          fi
+
+          stored_ref=$(jq -r ".last_ref // empty" upstream_state.json)
+
+          echo "Latest tag: $latest_tag (ref: $latest_ref)"
+          echo "Stored ref: $stored_ref"
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          echo "latest_ref=$latest_ref" >> "$GITHUB_OUTPUT"
+          echo "stored_ref=$stored_ref" >> "$GITHUB_OUTPUT"
+
+          if [ "$FORCE" = "true" ] || [ "$latest_ref" != "$stored_ref" ]; then
+            echo "New release detected (or force=true)"
+            echo "has_new_tag=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No changes"
+            echo "has_new_tag=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  check-api-changes:
+    needs: check-upstream
+    if: needs.check-upstream.outputs.has_new_tag == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      api_changed: ${{ steps.diff.outputs.api_changed }}
+    steps:
+      - name: Check if API-related files changed
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          FORCE="${{ inputs.force || 'false' }}"
+          STORED_REF="${{ needs.check-upstream.outputs.stored_ref }}"
+          LATEST_REF="${{ needs.check-upstream.outputs.latest_ref }}"
+          API_PATHS="${{ vars.API_PATHS }}"
+
+          if [ "$FORCE" = "true" ]; then
+            echo "Force build, skipping API diff"
+            echo "api_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # First build — no stored ref to compare against
+          if [ -z "$STORED_REF" ]; then
+            echo "First build, no previous ref"
+            echo "api_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Get changed files between refs via GitHub API
+          changed_files=$(gh api "repos/${{ vars.UPSTREAM_REPO }}/compare/${STORED_REF}...${LATEST_REF}" \
+            --jq '.files[].filename' 2>/dev/null || echo "COMPARE_FAILED")
+
+          if [ "$changed_files" = "COMPARE_FAILED" ]; then
+            echo "Could not compare refs, assuming API changed"
+            echo "api_changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Check if any changed files match API paths
+          for api_path in $API_PATHS; do
+            if echo "$changed_files" | grep -q "^${api_path}"; then
+              echo "API-related file changed under: $api_path"
+              echo "api_changed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          echo "No API-related files changed, skipping build"
+          echo "api_changed=false" >> "$GITHUB_OUTPUT"
+
+  build-and-publish:
+    needs: [check-upstream, check-api-changes]
+    if: needs.check-api-changes.outputs.api_changed == 'true'
+    runs-on: ubuntu-latest
+
+    env:
+      DB_ENGINE: django.db.backends.sqlite3
+      SECRET_KEY: not-a-real-secret-just-for-schema-generation
+      ALLOWED_HOSTS: '*'
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+        with:
+          path: publisher
+
+      - name: Checkout upstream
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.UPSTREAM_REPO }}
+          ref: ${{ needs.check-upstream.outputs.latest_ref }}
+          path: upstream
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libsasl2-dev libldap2-dev libssl-dev libxmlsec1-dev \
+            pkg-config
+
+      - name: Install upstream Python dependencies
+        run: |
+          cd upstream
+          pip install -r requirements.txt
+          pip install drf-spectacular
+
+      - name: Extract OpenAPI schema
+        run: |
+          cd upstream
+          python ../publisher/scripts/extract_schema.py . ../publisher/schema.json
+
+      - name: Check schema diff
+        id: schema-diff
+        run: |
+          cd publisher
+          STORED="schemas/stable.json"
+          NEW="schema.json"
+          FORCE="${{ inputs.force || 'false' }}"
+
+          if [ "$FORCE" = "true" ]; then
+            echo "Force build requested"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif [ ! -f "$STORED" ]; then
+            echo "No stored schema, first build"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif diff -q "$STORED" "$NEW" > /dev/null 2>&1; then
+            echo "Schema unchanged after extraction, skipping publish"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Schema changed"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute version
+        if: steps.schema-diff.outputs.changed == 'true'
+        id: version
+        run: |
+          cd publisher
+          VERSION=$(python scripts/compute_version.py \
+            --state-file upstream_state.json \
+            --upstream-url "${{ vars.UPSTREAM_URL }}" \
+            --tag "${{ needs.check-upstream.outputs.latest_tag }}")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Computed version: $VERSION"
+
+      - name: Install openapi-python-client
+        if: steps.schema-diff.outputs.changed == 'true'
+        run: pip install openapi-python-client
+
+      - name: Generate client
+        if: steps.schema-diff.outputs.changed == 'true'
+        run: |
+          cd publisher
+          openapi-python-client generate \
+            --path schema.json \
+            --config generator_config.yml
+
+      - name: Patch package metadata
+        if: steps.schema-diff.outputs.changed == 'true'
+        run: |
+          cd publisher
+          python scripts/patch_package.py tandoor-client "${{ steps.version.outputs.version }}" \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}" \
+            --upstream-url "${{ github.server_url }}/${{ vars.UPSTREAM_REPO }}"
+
+      - name: Build package
+        if: steps.schema-diff.outputs.changed == 'true'
+        run: |
+          cd publisher/tandoor-client
+          pip install build
+          python -m build
+
+      - name: Smoke test
+        if: steps.schema-diff.outputs.changed == 'true'
+        run: |
+          cd publisher
+          pip install tandoor-client/dist/*.whl
+          python scripts/validate_client.py tandoor-client
+
+      - name: Publish to PyPI
+        if: steps.schema-diff.outputs.changed == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: publisher/tandoor-client/dist/
+
+      - name: Update state and schema
+        if: steps.schema-diff.outputs.changed == 'true'
+        run: |
+          cd publisher
+          python scripts/compute_version.py \
+            --state-file upstream_state.json \
+            --upstream-url "${{ vars.UPSTREAM_URL }}" \
+            --tag "${{ needs.check-upstream.outputs.latest_tag }}" \
+            --update-ref "${{ needs.check-upstream.outputs.latest_ref }}" > /dev/null
+          cp schema.json schemas/stable.json
+
+      - name: Commit state changes
+        if: steps.schema-diff.outputs.changed == 'true'
+        run: |
+          cd publisher
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add upstream_state.json schemas/stable.json
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: update state (${{ steps.version.outputs.version }})"
+          git pull --rebase
+          git push
