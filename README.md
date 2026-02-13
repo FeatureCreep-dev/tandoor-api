@@ -48,11 +48,11 @@ A daily GitHub Actions workflow:
 2. Compares changed files against known API paths — if no API files changed, stops early
 3. Extracts the OpenAPI schema via `manage.py spectacular`
 4. If the schema differs from the last published version, generates a typed Python client using [openapi-python-client](https://github.com/openapi-generators/openapi-python-client)
-5. Publishes to PyPI via Trusted Publisher (OIDC, no stored credentials)
+5. Publishes to PyPI via Trusted Publisher
 
 ## Configuration
 
-The workflow uses GitHub repository variables (no hardcoded values):
+The workflow uses GitHub repository variables:
 
 | Variable | Purpose | Example |
 |----------|---------|---------|
@@ -66,6 +66,3 @@ The workflow uses GitHub repository variables (no hardcoded values):
 gh workflow run build-and-publish.yml -f force=true
 ```
 
-## License
-
-MIT
