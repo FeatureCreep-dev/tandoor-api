@@ -24,7 +24,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 authors = [
-    {{name = "Tandoor Client Auto-Publisher"}},
+    {{name = "Feature Creep", email = "cron@featurecreep.dev"}},
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -75,11 +75,21 @@ def create_package_readme(package_dir: Path, version: str, repo_url: str) -> Non
         "pip install tandoor-client\n"
         "```\n\n"
         "## Usage\n\n"
+        "Most endpoints require authentication. Use `AuthenticatedClient` with an API token\n"
+        "from your Tandoor instance (Settings > API Browser > Tokens).\n\n"
         "```python\n"
-        "from tandoor_client import Client\n\n"
-        'client = Client(base_url="https://your-tandoor-instance.com")\n'
+        "from tandoor_client import AuthenticatedClient\n\n"
+        "client = AuthenticatedClient(\n"
+        '    base_url="https://your-tandoor-instance.com",\n'
+        '    token="your-api-token",\n'
+        ")\n"
         "```\n\n"
-        f"See the [main repository]({repo_url}) for more details.\n"
+        "### Example: List Recipes\n\n"
+        "```python\n"
+        "from tandoor_client.api.recipe import recipe_list\n\n"
+        "response = recipe_list.sync(client=client)\n"
+        "```\n\n"
+        f"See the [pipeline repository]({repo_url}) for full documentation.\n"
     )
     print(f"Created {readme_path}")
 
