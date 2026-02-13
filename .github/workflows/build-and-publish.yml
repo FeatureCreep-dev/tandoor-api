@@ -269,3 +269,14 @@ jobs:
           git commit -m "chore: update state (${{ steps.version.outputs.version }})"
           git pull --rebase
           git push
+
+      - name: Create GitHub Release
+        if: steps.schema-diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd publisher
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "v${VERSION}" \
+            --title "tandoor-client ${VERSION}" \
+            --notes "Auto-published from upstream Tandoor Recipes tag ${{ needs.check-upstream.outputs.latest_tag }}."
